@@ -1,6 +1,7 @@
+
 <mujoco>
   <asset>
-    <mesh name="robot_stl" file="robot.stl" scale="1 1 1"/>
+    <mesh name="robot_stl" file="robot_decimated.stl" scale="1 1 1"/>
   </asset>
 
   <worldbody>
@@ -10,7 +11,7 @@
     <!-- Left Goal (starting at -6m) -->
     <body name="left_goal" pos="-6 0 0">
         <!-- Red goal line at exactly x=-6 -->
-        <site name="left_goal_line_red" pos="-0.01 0 0" size="0.01 0.9 0.001" rgba="1 0 0 1" type="box"/>
+        <site name="left_goal_box" pos="-0.1 0 0" size="0.1 0.9 0.001" rgba="1 0 0 1" type="box"/>
         
         <!-- Side blockers -->
         <geom name="left_goal_side_top" type="box" size="0.1 0.01 0.09" pos="-0.1 0.9 0.09" rgba="0 0 1 1"/>
@@ -23,7 +24,7 @@
     <!-- Right Goal (starting at +6m) -->
     <body name="right_goal" pos="6 0 0">
         <!-- Red goal line at exactly x=6 -->
-        <site name="right_goal_line_red" pos="0.01 0 0" size="0.01 0.9 0.001" rgba="1 0 0 1" type="box"/>
+        <site name="right_goal_box" pos="0.1 0 0" size="0.1 0.9 0.001" rgba="1 0 0 1" type="box"/>
         
         <!-- Side blockers -->
         <geom name="right_goal_side_top" type="box" size="0.1 0.01 0.09" pos="0.1 0.9 0.09" rgba="0 0 1 1"/>
@@ -43,10 +44,6 @@
     <site name="field_line_vertical" pos="0 0 0" size="0.008 4.5 0.001" rgba="1 1 1 1" type="box"/>
     <site name="field_line_horizontal" pos="0 0 0" size="6 0.008 0.001" rgba="1 1 1 1" type="box"/>
                                                                                             
-    <!-- Center circle outline with 1 meter diameter -->
-    <site name="center_circle_outline" pos="0 0 0" size="0.5 0.001 0.001" rgba="1 1 1 1" type="cylinder"/>
-    <site name="center_circle_cutout" pos="0 0 0.0001" size="0.484 0.001 0.001" rgba="0.48 0.78 0.27 1" type="cylinder"/>
-    
     <!-- Left goal box (1.8m wide × 3.6m tall) -->
     <site name="left_goal_box_top" pos="-5.1 1.8 0.0005" size="0.9 0.008 0.001" rgba="1 1 1 1" type="box"/>
     <site name="left_goal_box_bottom" pos="-5.1 -1.8 0.0005" size="0.9 0.008 0.001" rgba="1 1 1 1" type="box"/>
@@ -59,45 +56,53 @@
 
     <!-- Body for main robot -->
     <body name="robot_planar" pos="0 0 0">
-
         <!-- Planar joint using a combination of slide joints -->
-        <joint name="x_slide" type="slide" axis="1 0 0" pos="0 0 0" damping="7.0" armature="0.1"/>
-        <joint name="y_slide" type="slide" axis="0 1 0" pos="0 0 0" damping="7.0" armature="0.1"/>
-        <joint name="z_rotate" type="hinge" axis="0 0 1" pos="0 0 0" damping="1.0" armature="0.1"/>
+        <joint name="x_slide" type="slide" axis="1 0 0" pos="0 0 0" damping="0.8" armature="0.6"/>
+        <joint name="y_slide" type="slide" axis="0 1 0" pos="0 0 0" damping="0.8" armature="0.6"/>
+        <joint name="z_rotate" type="hinge" axis="0 0 1" pos="0 0 0" damping="0" armature="0.5"/>
             
-      <!-- The actual robot geometry -->
-      <geom name="robot_mesh" type="mesh" mesh="robot_stl" rgba="0 0 1 1" mass="2.5" />
+        <!-- The actual robot geometry -->
+        <geom name="robot_mesh" type="mesh" mesh="robot_stl" rgba="0 0 1 1" mass="5"/>
 
-        <!-- Add kicker mechanism -->
-        <body name="kicker" pos="0 0.058 0.02">
-            <!-- Kicker joint -->
-            <joint name="kicker_extend" type="slide" axis="0 1 0" limited="true" range="0 0.05" damping="1" stiffness="200" springref="0"/>
+        <!-- Front-mounted kicker that won't collide with the robot -->
+        <body name="kicker_body" pos="0 0.065 0.02">
+            <!-- Kicker joint with balanced parameters -->
+            <joint name="kicker_extend" type="slide" axis="0 1 0" limited="true" range="0 0.1"
+                  damping="0" stiffness="0" armature="0"/>
             
-            <!-- Kicker geometry -->
-            <geom name="kicker_plate" type="box" size="0.05 0.01 0.02" rgba="1 0.5 0 1" mass="0.1" friction="1.0 0.005 0.05"/>
+            <!-- Kicker plate geometry -->
+            <geom name="kicker_plate_geom" type="box" size="0.055 0.004 0.025" rgba="1 0.5 0 1" 
+                  mass="0.5" friction="1.8 0.005 0.05" solref="0.01 1" solimp="0.95 0.98 0.001"/>
         </body>
     </body>
 
     <!-- Golf ball -->
     <body name="golf_ball" pos="0 1 1">
-        <joint name= "ball_joint" type="free"/>
-        <geom name="golf_ball_geom" type="sphere" size="0.0215" rgba="1 0 0 1" mass="0.046" friction="1.0 0.01 0.008" condim="6"/>
+        <joint name= "ball_joint" type="free"/>                                                   
+        <geom name="golf_ball_geom" type="sphere" size="0.0215" rgba="1 0 0 1" mass="0.046" friction="2.408 0.01 0.0035" condim="6"/> <!-- 0.0035 is set experimentally, sliding friction is rolling friction * 0.985 (from Tigers) -->
+                                                                                                                                      <!-- However to model the friction of dribbler, make it times 8.-->
     </body>
 
   </worldbody>
 
     <actuator>
-        <motor name="x_motor" joint="x_slide" gear="15"/>
-        <motor name="y_motor" joint="y_slide" gear="15"/>
-        <motor name="rotate_motor" joint="z_rotate" gear="5"/>
+        <velocity name="x_vel" joint="x_slide" kv="22" ctrlrange="-3 3"/>
+        <velocity name="y_vel" joint="y_slide" kv="22" ctrlrange="-3 3"/>
+        <velocity name="rot_vel" joint="z_rotate" kv="5"/>
+
+        <!-- <motor name="x_motor" joint="x_slide" gear="20"/>
+        <motor name="y_motor" joint="y_slide" gear="20"/>
+        <motor name="rotate_motor" joint="z_rotate" gear="5"/> -->
 
         <motor name="ball_x" joint="ball_joint" gear="0.5 0 0 0 0 0" />
         <motor name="ball_y" joint="ball_joint" gear="0 0.5 0 0 0 0" />
-        <motor name="kicker_motor" joint="kicker_extend" gear="50"/>
+        <position name="kicker_pos" joint="kicker_extend" kp="800" kv="20" ctrlrange="0 1" ctrllimited="true"/>
   </actuator>
 
   <contact>
     <pair geom1="robot_mesh" geom2="golf_ball_geom"/>
+    <pair geom1="kicker_plate_geom" geom2="golf_ball_geom"/>
+    <exclude body1="robot_planar" body2="kicker_body"/>
 </contact>
 
 </mujoco>
