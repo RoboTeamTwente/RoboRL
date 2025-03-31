@@ -64,9 +64,9 @@
         <!-- The actual robot geometry -->
         <geom name="robot_mesh" type="mesh" mesh="robot_stl" rgba="0 0 1 1" mass="5"/>
 
-        <!-- Front-mounted kicker that won't collide with the robot -->
+        <!-- Front-mounted kicker -->
         <body name="kicker_body" pos="0 0.065 0.02">
-            <!-- Kicker joint with balanced parameters -->
+            <!-- Kicker joint -->
             <joint name="kicker_extend" type="slide" axis="0 1 0" limited="true" range="0 0.1"
                   damping="0" stiffness="0" armature="0"/>
             
@@ -89,10 +89,6 @@
         <velocity name="x_vel" joint="x_slide" kv="22" ctrlrange="-3 3"/>
         <velocity name="y_vel" joint="y_slide" kv="22" ctrlrange="-3 3"/>
         <velocity name="rot_vel" joint="z_rotate" kv="5"/>
-
-        <!-- <motor name="x_motor" joint="x_slide" gear="20"/>
-        <motor name="y_motor" joint="y_slide" gear="20"/>
-        <motor name="rotate_motor" joint="z_rotate" gear="5"/> -->
 
         <motor name="ball_x" joint="ball_joint" gear="0.5 0 0 0 0 0" />
         <motor name="ball_y" joint="ball_joint" gear="0 0.5 0 0 0 0" />
