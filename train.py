@@ -38,8 +38,6 @@ import numpy as np
 
 from RoboRLEnv import RoboRLEnv
 
-# os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = ".99"
-
 # Instantiate environment
 env = RoboRLEnv()
 
@@ -53,6 +51,7 @@ ppo_params['num_timesteps'] = 100000  # Change total training steps
 ppo_params['learning_rate'] = 1e-4  # Adjust learning rate
 ppo_params['num_envs'] = 512  # Change number of parallel environments
 ppo_params['batch_size'] = 16  # Make it 32 or 64 for fast learning
+ppo_params['episode_length'] = 2000 # Approx 20 seconds
 
 x_data, y_data, y_dataerr = [], [], []
 times = [datetime.now()]
@@ -68,6 +67,7 @@ def progress(num_steps, metrics):
     
     # Print raw reward for debugging
     print(f"Episode reward: {metrics['eval/episode_reward']:.6f}")
+    print(f"Detailed metrics: {metrics}")
 
     if num_steps == 0:
       print(f"Time taken to initialize: {(current_time - times[0]).total_seconds():.1f} seconds")
@@ -84,7 +84,7 @@ def progress(num_steps, metrics):
             remaining_time = remaining_steps / steps_per_second
             print(f"Estimated time remaining: {remaining_time:.1f} seconds")
     
-    # Rest of your plotting code...
+    # Rest of your plotting code
     plt.xlim([0, ppo_params["num_timesteps"] * 1.25])
     plt.ylim([0, 1100])
     plt.xlabel("# environment steps")
