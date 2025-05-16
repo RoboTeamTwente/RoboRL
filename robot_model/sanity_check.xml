@@ -1,0 +1,14 @@
+<mujoco>
+  <option gravity="0 0 0"/>
+  <worldbody>
+    <geom name="floor" type="plane" size="1 1 1"/>
+    <body name="robot" pos="0 0 1"> <joint type="free"/> <geom name="base" type="box" size="0.08 0.10 0.018" mass="1"/>
+      <body name="kicker" pos="0.08 0 0"> <joint name="slide" type="slide" axis="1 0 0" range="0 0.05"/>
+        <geom name="plate" type="box" size="0.005 0.0665 0.018" pos="0.005 0 0" mass="0.1"/>
+      </body>
+    </body>
+  </worldbody>
+  <contact>
+    <exclude body1="robot" body2="kicker"/>
+  </contact>
+</mujoco>

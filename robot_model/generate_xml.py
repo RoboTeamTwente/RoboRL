@@ -1,7 +1,7 @@
 import textwrap
 
 # --- Configuration ---
-NUM_AGENTS_TEAM_A = 2 # Example: 1 agent in team A
+NUM_AGENTS_TEAM_A = 1 # Example: 1 agent in team A
 NUM_AGENTS_TEAM_B = 0 # Example: 1 agent in team B
 TOTAL_AGENTS = NUM_AGENTS_TEAM_A + NUM_AGENTS_TEAM_B
 
@@ -10,7 +10,7 @@ TOTAL_AGENTS = NUM_AGENTS_TEAM_A + NUM_AGENTS_TEAM_B
 AGENT_CONFIG = [
     # Team A
     {'id': 0, 'pos': "-2 0 0", 'rgba': "0 0 1 1"},
-    {'id': 1, 'pos': "-1 0 0", 'rgba': "0 0 1 1"},
+    # {'id': 1, 'pos': "-1 0 0", 'rgba': "0 0 1 1"},
     # Add more team A agents if NUM_AGENTS_TEAM_A > 1
     # {'id': 1, 'pos': "-1 -1 0", 'rgba': "0 0.2 1 1"},
 
@@ -77,8 +77,14 @@ final_xml = textwrap.dedent(f"""
   <asset>
     <mesh name="robot_stl" file="robot_decimated.stl" scale="1 1 1"/>
   </asset>
+                            
+  <default>
+    <geom contype="0" conaffinity="0"/>
+  </default>
 
   <worldbody>
+    <camera name="top" pos="0 0 12"/>                 
+
     <geom name="field" type="plane" size="7.5 6 0.01" pos="0 0 -0.01" rgba="0.48 0.78 0.27 1"/>
 
     <body name="left_goal" pos="-6 0 0">

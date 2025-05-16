@@ -42,7 +42,7 @@ def actor_step(
 ) -> Tuple[State, Transition]:
   """Collect data."""
   actions, policy_extras = policy(env_state.obs, key)
-  # print(f"Debug - actions after policy call shape: {actions.shape}")
+  print(f"Debug - actions after policy call shape: {actions.shape}")
   nstate = env.step(env_state, actions)
   state_extras = {x: nstate.info[x] for x in extra_fields}
   return nstate, Transition(  # pytype: disable=wrong-arg-types  # jax-ndarray

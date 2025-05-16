@@ -4,7 +4,13 @@
     <mesh name="robot_stl" file="robot_decimated.stl" scale="1 1 1"/>
   </asset>
 
+  <!-- <default>
+    <geom contype="0" conaffinity="0"/>
+  </default> -->
+
   <worldbody>
+    <camera name="top" pos="0 0 12"/>                 
+
     <geom name="field" type="plane" size="7.5 6 0.01" pos="0 0 -0.01" rgba="0.48 0.78 0.27 1"/>
 
     <body name="left_goal" pos="-6 0 0">
@@ -40,29 +46,14 @@
         <joint name="y_slide_0" type="slide" axis="0 1 0" pos="0 0 0" damping="0.8" armature="0.6"/>
         <joint name="z_rotate_0" type="hinge" axis="0 0 1" pos="0 0 0" damping="0" armature="0.5"/>
 
-        <geom name="robot_mesh_0" type="mesh" mesh="robot_stl" rgba="0 0 1 1" mass="5"/>
+        <!-- <geom name="robot_mesh_0" type="mesh" mesh="robot_stl" rgba="0 0 1 1" mass="5"/> -->
+        <geom name="robot_mesh_0" type="cylinder" size="0.15 0.02" pos="0 0 0.02" mass="5"/>
 
         <body name="kicker_body_0" pos="0 0.065 0.02">
             <joint name="kicker_extend_0" type="slide" axis="0 1 0" limited="true" range="0 0.1"
                   damping="0" stiffness="0" armature="0"/>
 
             <geom name="kicker_plate_geom_0" type="box" size="0.055 0.004 0.025" rgba="1 0.5 0 1"
-                  mass="0.5" friction="1.8 0.005 0.05" solref="0.01 1" solimp="0.95 0.98 0.001"/>
-        </body>
-    </body>
-
-    <body name="robot_planar_1" pos="-1 0 0">
-        <joint name="x_slide_1" type="slide" axis="1 0 0" pos="0 0 0" damping="0.8" armature="0.6"/>
-        <joint name="y_slide_1" type="slide" axis="0 1 0" pos="0 0 0" damping="0.8" armature="0.6"/>
-        <joint name="z_rotate_1" type="hinge" axis="0 0 1" pos="0 0 0" damping="0" armature="0.5"/>
-
-        <geom name="robot_mesh_1" type="mesh" mesh="robot_stl" rgba="0 0 1 1" mass="5"/>
-
-        <body name="kicker_body_1" pos="0 0.065 0.02">
-            <joint name="kicker_extend_1" type="slide" axis="0 1 0" limited="true" range="0 0.1"
-                  damping="0" stiffness="0" armature="0"/>
-
-            <geom name="kicker_plate_geom_1" type="box" size="0.055 0.004 0.025" rgba="1 0.5 0 1"
                   mass="0.5" friction="1.8 0.005 0.05" solref="0.01 1" solimp="0.95 0.98 0.001"/>
         </body>
     </body>
@@ -80,11 +71,6 @@
     <velocity name="rot_vel_0" joint="z_rotate_0" kv="5"/>
     <position name="kicker_pos_0" joint="kicker_extend_0" kp="800" kv="20" ctrlrange="0 1" ctrllimited="true"/>
 
-    <velocity name="x_vel_1" joint="x_slide_1" kv="22" ctrlrange="-3 3"/>
-    <velocity name="y_vel_1" joint="y_slide_1" kv="22" ctrlrange="-3 3"/>
-    <velocity name="rot_vel_1" joint="z_rotate_1" kv="5"/>
-    <position name="kicker_pos_1" joint="kicker_extend_1" kp="800" kv="20" ctrlrange="0 1" ctrllimited="true"/>
-
     </actuator>
 
   <contact>
@@ -92,10 +78,6 @@
     <pair geom1="robot_mesh_0" geom2="golf_ball_geom"/>
     <pair geom1="kicker_plate_geom_0" geom2="golf_ball_geom"/>
     <exclude body1="robot_planar_0" body2="kicker_body_0"/>
-
-    <pair geom1="robot_mesh_1" geom2="golf_ball_geom"/>
-    <pair geom1="kicker_plate_geom_1" geom2="golf_ball_geom"/>
-    <exclude body1="robot_planar_1" body2="kicker_body_1"/>
 
     </contact>
 
