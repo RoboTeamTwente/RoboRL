@@ -40,7 +40,7 @@ def get_robot_body(agent_id: int, pos: str, rgba: str) -> str:
             <joint name="kicker_extend_{agent_id}" type="slide" axis="0 1 0" limited="true" range="0 0.1"
                   damping="0" stiffness="0" armature="0"/>
 
-            <geom name="kicker_plate_geom_{agent_id}" type="box" size="0.055 0.004 0.025" rgba="1 0.5 0 1"
+            <geom name="kicker_plate_geom_{agent_id}" type="box" size="0.04 0.004 0.02" rgba="1 0.5 0 1"
                   mass="0.5" friction="1.8 0.005 0.05" solref="0.01 1" solimp="0.95 0.98 0.001"/>
         </body>
     </body>

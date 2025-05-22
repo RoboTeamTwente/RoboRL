@@ -30,8 +30,6 @@ class RoboRLEnv(PipelineEnv):
 
         mj_model = mujoco.MjModel.from_xml_path(xml_path) # This is on CPU
         mj_model.opt.solver = mujoco.mjtSolver.mjSOL_NEWTON
-        mj_model.opt.iterations = 100
-        mj_model.opt.ls_iterations = 100
         sys = mjcf.load_model(mj_model)
 
         physics_steps_per_control_step = 5
@@ -293,13 +291,37 @@ class RoboRLEnv(PipelineEnv):
         Returns:
         state: Updated state of the environment with type mjx_env.State.
         """
-        
-        # Scale the incoming actions from [-1, 1] to [-3, 3], and flatten because pipeline_step expects an array of all actuators, of lenght: num_agents * 4
-        action = action * 3.0
-        # action = action.at[-1].set(0)# Remove kicker
+
+        # 4 actions, x_vel, y_vel, rot_vel, kicker
+
+        # --- Process dribbling policy action ---
+        is_dribbling_flag = state.obs[15::16]
+        is_dribbler_on = jnp.where(is_dribbling_flag, 1.0, 0.0)
+
+        # --- Process policy controlled actions (Velocity, Rotation, Kicker Impulse) ---
+        # Input 'action' is shape [4]: [x_vel, y_vel, rot_vel, kicker]
+        policy_vel_rot_actions = action[:3]
+        final_vel_rot_actions = policy_vel_rot_actions * 3.0 # Scale velocity/rotation actions from policy range [-1, 1] to actuator ctrlrange [-3, 3]
+
+        # --- Process kicker policy action ---
+        policy_kicker_action = action[3] # This is a number between 0 and 1
+
+        kicker_trigger_threshold = 0.5
+        is_attempting_kick_impulse = jnp.logical_and(
+            policy_kicker_action > kicker_trigger_threshold,
+            is_dribbling_flag
+        )
+
+        # Combine everything into a single action array to put into pipeline_step
+        # Based on the MuJoCo XML, the actuators are x_vel, y_vel, rot_vel, dribbler, kicker_force_actuator.
+        pipeline_actions = jnp.concatenate([
+            final_vel_rot_actions,                                        # [3] for x_vel, y_vel, rot_vel
+            is_dribbler_on,         # [1] for dribbler (sticky dribbler) - activate with 1.0 when dribbling
+            is_attempting_kick_impulse # [1] for kicker_force_actuator (impulse kick)
+        ])
         
         data0 = state.pipeline_state
-        data = self.pipeline_step(data0, action)
+        data = self.pipeline_step(data0, pipeline_actions)
 
         obs = self._get_obs(data) # Huge jnp array of all agent observations
 
