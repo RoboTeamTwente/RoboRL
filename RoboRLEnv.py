@@ -32,7 +32,7 @@ class RoboRLEnv(PipelineEnv):
         mj_model.opt.solver = mujoco.mjtSolver.mjSOL_NEWTON
         sys = mjcf.load_model(mj_model)
 
-        physics_steps_per_control_step = 5
+        physics_steps_per_control_step = 16 # approx 60hz, was 8. Now 16 at approx 30hz
         kwargs['n_frames'] = kwargs.get(
             'n_frames', physics_steps_per_control_step)
         kwargs['backend'] = 'mjx'
@@ -53,7 +53,6 @@ class RoboRLEnv(PipelineEnv):
 
         self._num_agents = num_agents
         self._robot_joints_info = {}
-        self._kicker_geom_ids = {}
 
         self._obs_size = 16 # observation size per agent
 
@@ -67,6 +66,7 @@ class RoboRLEnv(PipelineEnv):
         self._z_qvel_adr = jnp.zeros(self._num_agents, dtype=jnp.int32)
 
         self._kicker_geom_ids = jnp.zeros(self._num_agents, dtype=jnp.int32)
+        self._kicker_beam_rf_ids = jnp.full(self._num_agents, -1, dtype=jnp.int32)
 
         for robot_id in range(self._num_agents):
             self._x_qpos_adr = self._x_qpos_adr.at[robot_id].set(
@@ -87,20 +87,21 @@ class RoboRLEnv(PipelineEnv):
             self._z_qvel_adr = self._z_qvel_adr.at[robot_id].set(
                 mj_model.jnt_dofadr[mj_model.joint(f"z_rotate_{robot_id}").id]
             )
-            self._kicker_geom_ids = self._kicker_geom_ids.at[robot_id].set(
-                mj_model.geom(f"kicker_plate_{robot_id}").id
-            )
 
-            k_id = mj_model.geom(f"kicker_plate_{robot_id}").id
-            self._kicker_geom_ids = self._kicker_geom_ids.at[robot_id].set(k_id)
-            # print(f"DEBUG: Agent {robot_id} Kicker Geom ID = {k_id} (Name: {mj_model.geom(k_id).name})")
-        
-        print(f"DEBUG: Ball Geom ID = {self._ball_geom_id} (Name: {mj_model.geom(self._ball_geom_id).name})")
-        print(f"DEBUG: Kicker Geom ID[0] = {self._kicker_geom_ids[0]}")
-        print(f"DEBUG: Ball X slide qpos adr: {self._ball_x_slide_qpos_adr}")
-        print(f"DEBUG: Ball Y slide qpos adr: {self._ball_y_slide_qpos_adr}")
+            try:
+                sensor_name = f"kicker_beam_rf_{robot_id}" 
+                sensor_id = mj_model.sensor(sensor_name).id
+                self._kicker_beam_rf_ids = self._kicker_beam_rf_ids.at[robot_id].set(sensor_id)
+                print(f"DEBUG: Agent {robot_id} Kicker Rangefinder Sensor ID = {sensor_id} (Name: {sensor_name})")
+            except KeyError: 
+                print(f"ERROR: Sensor '{sensor_name}' not found in the MJCF model for agent {robot_id}.")
+            
+        # print(f"DEBUG: Ball Geom ID = {self._ball_geom_id} (Name: {mj_model.geom(self._ball_geom_id).name})")
+        # print(f"DEBUG: Kicker Geom ID[0] = {self._kicker_geom_ids[0]}")
+        # print(f"DEBUG: Ball X slide qpos adr: {self._ball_x_slide_qpos_adr}")
+        # print(f"DEBUG: Ball Y slide qpos adr: {self._ball_y_slide_qpos_adr}")
 
-        self.far_distance_threshold = 0.5
+        self.far_distance_threshold = 0.25
 
     def reset(self, rng: jnp.ndarray) -> State:
         """Reset the environment.
@@ -114,6 +115,18 @@ class RoboRLEnv(PipelineEnv):
         rng, rng1, rng2 = jax.random.split(rng, 3)
         qpos = jnp.zeros(self.sys.nq)
         qvel = jnp.zeros(self.sys.nv)
+        
+        #####################
+        ##### IMPORTANT #####
+        #####################
+        
+        # The qpos and qvel we extract are with respect to the origin of the bodies.
+        # So if the bodies are spawned at anything other than 0,0, the coordinate systems will be off.
+        # So pay attention to the XML file; spawn everything at (0,0), or adjust for it here.
+
+        #####################
+        ##### IMPORTANT #####
+        #####################
 
         # Define a small margin to avoid spawning exactly on the edge
         pos_margin = 1
@@ -130,9 +143,9 @@ class RoboRLEnv(PipelineEnv):
         ball_x = jax.random.uniform(ball_x_rng, minval=x_min, maxval=x_max)
         ball_y = jax.random.uniform(ball_y_rng, minval=y_min, maxval=y_max)
 
-        # # Generate random positions for the ball
-        # ball_x = -3
-        # ball_y = 1
+        # Generate static positions for the ball
+        ball_x = 3
+        ball_y = 0
 
         # Ball is put on center of the field
         qpos = qpos.at[self._ball_x_slide_qpos_adr].set(ball_x)
@@ -148,6 +161,9 @@ class RoboRLEnv(PipelineEnv):
             x_pos = jax.random.uniform(agent_x_rng, minval=x_min, maxval=x_max)
             y_pos = jax.random.uniform(agent_y_rng, minval=y_min, maxval=y_max)
             rot_pos = jax.random.uniform(agent_rot_rng, minval=-jnp.pi, maxval=jnp.pi)
+            x_pos = 2.75
+            y_pos = 0
+            rot_pos = 0
 
             qpos = qpos.at[self._x_qpos_adr[robot_id]].set(x_pos)
             qpos = qpos.at[self._y_qpos_adr[robot_id]].set(y_pos)
@@ -163,8 +179,16 @@ class RoboRLEnv(PipelineEnv):
             'left_goal': zero,
             'right_goal': zero,
             'is_dribbling' : zero,
-            'is_dribbling_count': zero,
             'is_nan': zero,
+            'did_dribble_this_episode': zero,       # This will become the 0-1 trigger
+            '_internal_dribble_latch': zero,        # New: internal latch
+            # Rewards
+            'rew_goal': zero,
+            'rew_ball_to_goal': zero,
+            'rew_base_to_ball': zero,
+            'rew_ball_facing': zero,
+            'rew_dribbling': zero,
+            'pen_out_of_bounds': zero,
         }
 
         return State(data, obs, reward, done, metrics)
@@ -197,6 +221,25 @@ class RoboRLEnv(PipelineEnv):
         agent_obs_batch = obs.reshape(self._num_agents, self._obs_size) # [num_agents][obs_dim]
 
         def _get_dense_ball_to_goal_reward(ball_pos, ball_vel):
+            """
+            Computes a dense reward based on the ball's velocity towards the opponent's goal.
+
+            This reward is positive if the ball is moving generally towards the goal,
+            negative if it's moving away, and zero if it's stationary or its
+            movement is perpendicular to the goal direction.
+
+            We approximate ball has to traverse 8.5 meters at max.
+            At 60 hz control loop this can get up to 510 (unscaled).
+
+            Args:
+                ball_pos: The 3D position of the ball [x, y, z]
+                ball_vel: The 3D velocity of the ball [vx, vy, vz]. Only the 2D
+                          components (x, y) of the velocity are used.
+
+            Returns:
+                A scalar jnp.ndarray representing the component of the ball's 2D speed
+                that is directed towards the center of the opponent's goal.
+            """
 
             goal_pos = jnp.array([self._field_width / 2, 0.0, ball_pos[2]])
 
@@ -205,32 +248,80 @@ class RoboRLEnv(PipelineEnv):
             ball_to_goal_direction = ball_to_goal_vector / ball_to_goal_distance
 
             ball_vel_towards_goal = jnp.dot(ball_vel[:2], ball_to_goal_direction)
-            return ball_vel_towards_goal * 25
+
+            # # --- DEBUG NANs in reward input ---
+            # jax.debug.print("_get_dense_ball_to_goal_reward - ball_pos: {bp}, ball_vel: {bv}", bp=ball_pos, bv=ball_vel)
+            # # --- END DEBUG ---
+
+            return ball_vel_towards_goal
         
-        def _get_dense_base_to_ball_reward(robot_pos: jnp.ndarray,
-                                                  robot_vel: jnp.ndarray,
-                                                  robot_orientation: jnp.ndarray,
-                                                  ball_pos: jnp.ndarray):
-            # Call the refactored instance method
-            direction_to_ball, facing_ball_score, distance_to_ball = self._calculate_robot_to_ball_metrics(robot_pos, robot_orientation, ball_pos)
+        def _get_dense_base_to_ball_reward(robot_pos_2d: jnp.ndarray,
+                                                    robot_vel_2d: jnp.ndarray,
+                                                    robot_orientation_2d: jnp.ndarray,
+                                                    ball_pos_2d: jnp.ndarray):
+                """
+                Computes dense reward for the robot moving towards the ball.
+                Only gives reward if robot is far away (self.distance_threshold).
 
-            # Velocity of robot projected onto the direction vector pointing to the ball
-            robot_vel_towards_ball = jnp.dot(robot_vel, direction_to_ball)
+                Worst case scenario the robot has to traverse ~10 meters. If it does this at 1 m/s that's 9 seconds.
+                Control loop is ~60hz, meaning it get's 60*9 = 540 for the reward.
 
-            # Reward for moving towards the ball, only if moving towards it (positive projection)
-            move_towards_ball_reward = jnp.where(robot_vel_towards_ball > 0.0, robot_vel_towards_ball, 0.0)
+                If it moves 0.5 m/s forward for 1 second. Thats 60 control loops at 0.5 = 30 * 0.02 (scaled) = 0.6
+                Then lets say it moves back at 0.5 for 1 second. That costs 60*0.03 = 1.8
+                Then it moves again 0.5 m/s forward for 1 second. Thats 0.6 again. But also costs 1.8 so 1.2 - 3.2 - 
 
-            # Apply distance multiplier: reward is higher if the robot is far from the ball
-            distance_multiplier = jnp.where(distance_to_ball > self.far_distance_threshold, 1.0, 0.0) # Uses self.far_distance_threshold
-            move_towards_ball_reward_dist_modified = move_towards_ball_reward * distance_multiplier
+                Args:
+                    robot_pos_2d: position of the robot [x,y]
+                    robot_vel_2d: velocity of the robot [x,y]
+                    robot_orientation_2d: orientation in [cos, sin] (needed for direction calculation)
+                    ball_pos_2d: position of the ball in [x,y]
 
-            # Reward scaling factors (consider making these named constants or class attributes)
-            move_reward_scale = 0.05
-            facing_score_scale = 0.02
-            dense_reward = (move_towards_ball_reward_dist_modified * move_reward_scale +
-                            facing_ball_score * facing_score_scale)
-            return dense_reward
+                Returns:
+                    Dense reward per step for moving to the ball if far away.
+                """
 
+                # Get direction and distance to the ball.
+                direction_to_ball, distance_to_ball, _angle_rad = self._calculate_base_to_ball_score(
+                    robot_pos_2d, robot_orientation_2d, ball_pos_2d
+                )
+
+                # Dot product of robot velocity vector and robot to ball vector
+                robot_vel_towards_ball = jnp.dot(robot_vel_2d, direction_to_ball)
+
+                # Reward for moving towards the ball, only if moving towards it (positive projection)
+                move_towards_ball_reward = jnp.where(robot_vel_towards_ball > 0.0, robot_vel_towards_ball, 0.0)
+
+                # Apply distance check: only give reward when far away
+                distance_check = jnp.where(distance_to_ball > self.far_distance_threshold, 1.0, 0.0)
+                move_towards_ball_reward = move_towards_ball_reward * distance_check
+                
+                return move_towards_ball_reward
+            
+        def _get_dense_facing_ball_reward(robot_pos_2d: jnp.ndarray,
+                                                robot_orientation_2d: jnp.ndarray,
+                                                ball_pos_2d: jnp.ndarray):
+            """
+            Computes dense reward for the robot facing the ball.
+
+            Args:
+                robot_pos_2d: position of the robot [x,y]
+                robot_orientation_2d: orientation in [cos, sin]
+                ball_pos_2d: position of the ball in [x,y]
+
+            Returns:
+                Dense reward per step for facing the ball.
+            """
+
+            # Get the angle to the ball
+            _direction_to_ball, _distance_to_ball, angle_rad = self._calculate_base_to_ball_score(
+                robot_pos_2d, robot_orientation_2d, ball_pos_2d
+            )
+
+            # Calculate the facing score using the angle
+            facing_ball_score = self._calculate_robot_facing_score(angle_rad)
+            
+            return facing_ball_score
+        
         def _get_single_reward(agent_obs):
             """
             Compute reward for a single agent.
@@ -254,29 +345,53 @@ class RoboRLEnv(PipelineEnv):
             is_in_right_goal = agent_obs[14]     # Ball in right goal flag
             is_dribbling = agent_obs[15]         # Is agent dribbling
 
+            # All dense rewards combined
             dense_ball_to_goal_reward = _get_dense_ball_to_goal_reward(ball_pos, ball_vel)
-            dense_base_to_ball_reward = _get_dense_base_to_ball_reward(
-                robot_pos,
-                robot_vel,
-                robot_orientation,
-                ball_pos[:2]  # Pass only 2D ball position
-            )
+            dense_base_to_ball_reward = _get_dense_base_to_ball_reward(robot_pos, robot_vel, robot_orientation, ball_pos[:2]) * 0  # Pass only 2D ball position
+            dense_ball_facing_reward = _get_dense_facing_ball_reward(robot_pos, robot_orientation, ball_pos[:2]) * 0 # Only pass 2D ball position
+
+            # Now scale them:
+            dense_ball_to_goal_reward_scaled = dense_ball_to_goal_reward * 2 # Can reach 510 max
+            dense_base_to_ball_reward_scaled = dense_base_to_ball_reward * 0.01 # Each tick only counts positive vectors, and is scaled by velocity. Can reach 2.4 max. 
+            dense_ball_facing_reward_scaled = dense_ball_facing_reward * 0.001 # Can reach 10 max
+
+            # Logic here is that by doing nothing, the robot gets a negative reward of -30, just from existing.
+            # If it goes to the ball, it gains about 2.4. It gets massively more 
+
+            # # is_dribbling reward
+            dribbling_bonus = jnp.where(is_dribbling > 0, 0.04, 0.0)
             
             # General rewards
-            goal_reward = jnp.where(is_in_right_goal, 100.0, 0.0)
-            out_of_bounds_penalty = jnp.where(is_out_of_bounds, -1.0, 0.0)
+            goal_reward = jnp.where(is_in_right_goal, 500.0, 0.0)
+            out_of_bounds_penalty = jnp.where(is_out_of_bounds, -50.0, 0.0)
+            time_penalty = -0.03
             
-            total_reward = goal_reward + dense_ball_to_goal_reward + dense_base_to_ball_reward + out_of_bounds_penalty - 0.01
+            total_reward = goal_reward + dense_ball_to_goal_reward_scaled + dense_base_to_ball_reward_scaled + dense_ball_facing_reward_scaled + out_of_bounds_penalty + time_penalty + dribbling_bonus # By doing nothing agent receives 30 penalty over 1000 steps
             
-            return total_reward
+            reward_components = {
+                'rew_goal': goal_reward,
+                'rew_ball_to_goal': dense_ball_to_goal_reward_scaled,
+                'rew_base_to_ball': dense_base_to_ball_reward_scaled,
+                'rew_ball_facing': dense_ball_facing_reward_scaled,
+                'rew_dribbling': dribbling_bonus,
+                'pen_out_of_bounds': out_of_bounds_penalty,
+            }
+
+            return total_reward, reward_components
         
-        # We vmap and parallize over all agents at once
-        individual_rewards = jnp.sum(jax.vmap(_get_single_reward)(agent_obs_batch))
-        team_reward = 0
+        # 1. Unpack the two outputs of vmap
+        all_total_rewards_array, all_components_pytree = jax.vmap(_get_single_reward)(agent_obs_batch)
 
-        total_reward = individual_rewards + team_reward
+        # 2. Sum only the array of total rewards
+        final_total_reward = jnp.sum(all_total_rewards_array)
 
-        return total_reward
+        # 3. Process the components PyTree for logging (extract scalar for single agent)
+        if self._num_agents == 1:
+            final_components_dict = jax.tree_map(lambda x: x[0], all_components_pytree)
+        else:
+            final_components_dict = jax.tree_map(jnp.sum, all_components_pytree)
+
+        return final_total_reward, final_components_dict
 
     def step(self, state: State, action: jnp.ndarray) -> State:
 
@@ -292,21 +407,16 @@ class RoboRLEnv(PipelineEnv):
         state: Updated state of the environment with type mjx_env.State.
         """
 
-        # 4 actions, x_vel, y_vel, rot_vel, kicker
-
-        # --- Process dribbling policy action ---
         is_dribbling_flag = state.obs[15::16]
-        is_dribbler_on = jnp.where(is_dribbling_flag, 1.0, 0.0)
+        dribbler_actuator_signal = jnp.where(is_dribbling_flag > 0.5, -1.0, 0.0)
 
-        # --- Process policy controlled actions (Velocity, Rotation, Kicker Impulse) ---
         # Input 'action' is shape [4]: [x_vel, y_vel, rot_vel, kicker]
         policy_vel_rot_actions = action[:3]
         final_vel_rot_actions = policy_vel_rot_actions * 3.0 # Scale velocity/rotation actions from policy range [-1, 1] to actuator ctrlrange [-3, 3]
 
-        # --- Process kicker policy action ---
         policy_kicker_action = action[3] # This is a number between 0 and 1
 
-        kicker_trigger_threshold = 0.5
+        kicker_trigger_threshold = 0.5 # Temporarily disable kicker.
         is_attempting_kick_impulse = jnp.logical_and(
             policy_kicker_action > kicker_trigger_threshold,
             is_dribbling_flag
@@ -316,9 +426,11 @@ class RoboRLEnv(PipelineEnv):
         # Based on the MuJoCo XML, the actuators are x_vel, y_vel, rot_vel, dribbler, kicker_force_actuator.
         pipeline_actions = jnp.concatenate([
             final_vel_rot_actions,                                        # [3] for x_vel, y_vel, rot_vel
-            is_dribbler_on,         # [1] for dribbler (sticky dribbler) - activate with 1.0 when dribbling
-            is_attempting_kick_impulse # [1] for kicker_force_actuator (impulse kick)
+            dribbler_actuator_signal,                                     # [1] sticky dribbler, activated with -1
+            is_attempting_kick_impulse                                    # [1] for kicker_force_actuator (impulse kick)
         ])
+
+        # jax.debug.print("step - pipeline_actions fed to physics: {pa}", pa=pipeline_actions)
         
         data0 = state.pipeline_state
         data = self.pipeline_step(data0, pipeline_actions)
@@ -332,7 +444,7 @@ class RoboRLEnv(PipelineEnv):
         is_in_right_goal = obs[-2]
         is_dribbling = obs[-1]
 
-        reward = self._get_reward(obs, is_in_left_goal, is_in_right_goal)
+        reward, reward_components_dict = self._get_reward(obs, is_in_left_goal, is_in_right_goal) # also outputs dict to check rewards
 
         is_nan = jnp.logical_or(
         jnp.isnan(data.qpos).any(),
@@ -347,10 +459,31 @@ class RoboRLEnv(PipelineEnv):
         metrics['is_dribbling'] = is_dribbling
         metrics['is_nan'] = is_nan
 
-        dribbling_termination = jnp.logical_and(state.done == 0, is_dribbling > 0).astype(jnp.float32)
+        # Get metric for checking if it dribbled at all this episode.
 
-        current_count = metrics.get('is_dribbling_count', jnp.array(0.0, dtype=jnp.float32))
-        metrics['is_dribbling_count'] = current_count + dribbling_termination
+        # 1. Get the latch status from the *previous* step
+        latch_was_off_previously = (state.metrics['_internal_dribble_latch'] < 0.5)
+        
+        # 2. Is dribbling happening in the current step?
+        dribbling_active_now = (is_dribbling > 0.5)
+
+        # 3. Set to 1.0 only if this is the FIRST dribble event this episode
+        is_first_dribble_event = jnp.logical_and(
+            dribbling_active_now,
+            latch_was_off_previously
+        )
+        metrics['did_dribble_this_episode'] = is_first_dribble_event.astype(jnp.float32)
+
+        # 4. Update the internal latch for the next step using the simple maximum logic
+        metrics['_internal_dribble_latch'] = jnp.maximum(
+            state.metrics['_internal_dribble_latch'], 
+            is_dribbling
+        )
+
+        # Add all reward components to the metrics dictionary
+        # The Brax training loop will sum these values over an episode.
+        for key, value in reward_components_dict.items():
+            metrics[key] = value
 
         possible_done_conditions = jnp.array([
             is_out_of_bounds,
@@ -477,66 +610,57 @@ class RoboRLEnv(PipelineEnv):
         ])).astype(jnp.float32)
     
     def _is_dribbling(self, data: mjx.Data, agent_id: int, robot_vel: jnp.ndarray) -> jnp.ndarray:
-        """
-        Check if the robot is dribbling with the ball at low velocity.
+            """
+            Check if the robot is dribbling based on the kicker_beam_rf rangefinder sensor.
+            If there is no ball, sensor will output 1. If there is, the value will be lower.
 
-        Args:
-            data: MuJoCo simulation data of type mjx.Data.
-            robot_id: The ID of the robot (1-indexed).
-            robot_vel: Velocity of the robot (x, y, z).
+            Args:
+                data: MuJoCo simulation data of type mjx.Data.
+                agent_id: The index of the agent.
+                robot_vel: Velocity of the robot (x, y, z). Currently unused in this specific dribbling logic.
+                
+            Returns:
+                A jnp.array([1.0]) if dribbling, jnp.array([0.0]) otherwise.
+            """
+            current_agent_sensor_id = self._kicker_beam_rf_ids[agent_id]
             
-        Returns:
-            Boolean indicating whether the robot is dribbling with the ball.
-        """
+            # Check if the sensor ID is valid (e.g., not -1)
+            is_sensor_id_valid = (current_agent_sensor_id != -1)
 
-        ball_vel_x = data.qvel[self._ball_x_slide_qvel_adr]
-        ball_vel_y = data.qvel[self._ball_y_slide_qvel_adr]
-        ball_vel_xy_vector = jnp.array([ball_vel_x, ball_vel_y])
+            def check_sensor_and_determine_dribbling(sensor_id_operand):
+                """
+                Called when sensor_id_operand is a valid sensor ID.
+                Checks the rangefinder reading and returns dribbling status.
+                """
+                distance_value = data.sensordata[sensor_id_operand]
+                # jax.debug.print("distance: x={distance}", distance=distance_value)
+                is_beam_interrrupted = distance_value < 0.07
 
-        # --- 1. Check for Kicker-Ball Contact (Keep the robust contact check) ---
-        ncon = data.ncon
-        kicker_id = self._kicker_geom_ids[agent_id]
-        ball_id = self._ball_geom_id
+                return jax.lax.select(
+                    is_beam_interrrupted,
+                    jnp.array([1.0], dtype=jnp.float32),  # Dribbling
+                    jnp.array([0.0], dtype=jnp.float32)   # Not dribbling
+                )
+            
+            def handle_invalid_sensor(unused_sensor_id_operand):
+                """
+                Called if the sensor ID was not valid (e.g., -1).
+                Robot is considered not dribbling.
+                """
+                return jnp.array([0.0], dtype=jnp.float32) # Not dribbling
+            
+            is_dribbling_status = jax.lax.cond(
+                is_sensor_id_valid,                     # Condition: is the sensor ID valid?
+                check_sensor_and_determine_dribbling,   # True branch
+                handle_invalid_sensor,                  # False branch
+                current_agent_sensor_id
+            )
 
-        geom1 = data.contact.geom1 # 1D array of all collision points, populated by the nearest geom to the contact point
-        geom2 = data.contact.geom2
-        dist = data.contact.dist # 1D array of all distances to the nearest geom
-        max_contacts = geom1.shape[0] # Total number of rows in the contact array of geom1
-
-        mask_is_active = jnp.arange(max_contacts) < ncon
-        mask_is_target_pair = ((geom1 == kicker_id) & (geom2 == ball_id) | (geom1 == ball_id) & (geom2 == kicker_id))
-        mask_is_touching = (dist <= 0.01)
-
-        found_actual_contact = jnp.any(mask_is_active & mask_is_target_pair & mask_is_touching)
-
-        # --- 2. Check Ball Speed ---
-        ball_vel_scalar = jnp.linalg.norm(ball_vel_xy_vector) # Ball velocity as a scalar
-        ball_speed_threshold = 0.5
-        is_ball_slow = ball_vel_scalar < ball_speed_threshold
-
-        # --- 3. Check Relative Speed between Robot Base and Ball ---
-        robot_vel_xy_vector = robot_vel[:2]
-        
-        # Check relative velocity
-        relative_vel_xy_vector = ball_vel_xy_vector - robot_vel_xy_vector
-        relative_vel_xy = jnp.linalg.norm(relative_vel_xy_vector)
-
-        # Define a threshold for relative speed
-        relative_speed_threshold = 0.2 # You'll need to tune this threshold
-        is_relative_speed_low = relative_vel_xy < relative_speed_threshold
-
-        # --- 4. Final Dribbling Check ---
-        # Dribbling requires contact AND low ball speed AND low relative speed.
-        is_dribbling = found_actual_contact
-
-        # jax.debug.print("Agent {id}: contact={c}",
-        #                 id=agent_id,
-        #                 c=is_dribbling)
-        return jnp.array([is_dribbling], dtype=jnp.float32)
+            return is_dribbling_status
     
-    def _calculate_robot_to_ball_metrics(self, robot_pos_2d: jnp.ndarray, robot_orientation_2d: jnp.ndarray, ball_pos_2d: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    def _calculate_base_to_ball_score(self, robot_pos_2d: jnp.ndarray, robot_orientation_2d: jnp.ndarray, ball_pos_2d: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         """
-        Computes metrics related to the robot's position and orientation relative to the ball.
+        Computes kinematic metrics related to the robot's position and orientation relative to the ball.
 
         Args:
             robot_pos_2d: Robot's 2D position (x, y).
@@ -545,23 +669,35 @@ class RoboRLEnv(PipelineEnv):
 
         Returns:
             A tuple containing:
-                - direction_to_ball (jnp.ndarray): Normalized 2D vector from robot to ball. Shape (2,).
-                - facing_score (jnp.ndarray): Scalar score (0-1) indicating how directly the robot faces the ball. Shape ().
-                - distance_to_ball (jnp.ndarray): Scalar L2 distance from robot to ball. Shape ().
+                - direction_to_ball_normalized (jnp.ndarray): Normalized 2D vector from robot to ball.
+                - distance_to_ball (jnp.ndarray): Scalar L2 distance from robot to ball.
+                - angle_rad (jnp.ndarray): Angle in radians between robot's orientation and direction to ball.
         """
 
         robot_to_ball_vector_2d = ball_pos_2d - robot_pos_2d
-        distance_to_ball = jnp.linalg.norm(robot_to_ball_vector_2d) + 1e-10
+        distance_to_ball = jnp.linalg.norm(robot_to_ball_vector_2d) + 1e-10 # Added 1e-10 for stability
         direction_to_ball_normalized = robot_to_ball_vector_2d / distance_to_ball
 
         dot_product = jnp.clip(jnp.dot(robot_orientation_2d, direction_to_ball_normalized), -1.0, 1.0)
         angle_rad = jnp.arccos(dot_product)  # Angle in radians
 
+        # Return all three important metrics
+        return direction_to_ball_normalized, distance_to_ball, angle_rad
+    
+    def _calculate_robot_facing_score(self, angle_rad: jnp.ndarray) -> jnp.ndarray:
+        """
+        Calculates the facing score based on the angle to the target.
+
+        Args:
+            angle_rad: Angle in radians between robot's orientation and direction to target.
+
+        Returns:
+            facing_score (jnp.ndarray): Scalar score (0-1) indicating how directly the robot faces the target.
+        """
         # facing_score: closer to 1 if angle is small, closer to 0 if angle is large.
         facing_score_param = 0.4
         facing_score = jnp.exp(-(angle_rad / facing_score_param)**2)
-
-        return direction_to_ball_normalized, facing_score, distance_to_ball
+        return facing_score
 
     def _get_robot_state(self, data: mjx.Data, robot_id: int) -> jnp.ndarray:
         """

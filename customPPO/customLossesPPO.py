@@ -109,7 +109,7 @@ def compute_ppo_loss(
     rng: jnp.ndarray,
     ppo_network: ppo_networks.PPONetworks,
     entropy_cost: float = 1e-4,
-    discounting: float = 0.9,
+    discounting: float = 0.99,
     reward_scaling: float = 1.0,
     gae_lambda: float = 0.95,
     clipping_epsilon: float = 0.3,

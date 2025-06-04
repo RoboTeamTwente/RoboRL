@@ -38,6 +38,11 @@ import time
 from typing import Callable, List, NamedTuple, Optional, Union
 import numpy as np
 
+import os
+# os.environ['XLA_FLAGS'] = '--xla_gpu_autotune_level=0'
+os.environ['MUJOCO_GL'] = 'osmesa'
+jax.config.update("jax_default_matmul_precision", "high")  
+
 from RoboRLEnv import RoboRLEnv
 
 num_agents = 1
@@ -46,14 +51,25 @@ obs_size_per_agent = 16
 # # Instantiate environment
 env = RoboRLEnv(num_agents=num_agents)
 
+relative_ckpt_path = epath.Path('./models_3')
+ckpt_path = relative_ckpt_path.resolve()
+ckpt_path.mkdir(parents=True, exist_ok=True)
+
+def policy_params_fn(current_step, make_policy, params):
+  # save checkpoints
+  orbax_checkpointer = ocp.PyTreeCheckpointer()
+  save_args = orbax_utils.save_args_from_target(params)
+  path = ckpt_path / f'{current_step}'
+  orbax_checkpointer.save(path, params, force=True, save_args=save_args)
+
 # Train
 train_fn = functools.partial(
-    train, num_timesteps=2000000, num_evals=5, reward_scaling=0.1,
-    episode_length=2000, normalize_observations=True, action_repeat=1,
-    unroll_length=10, num_minibatches=32, num_updates_per_batch=1,
-    discounting=0.97, learning_rate=2e-4, entropy_cost=1e-3, num_envs=512,
-    batch_size=512, seed=0, num_agents=num_agents,
-    obs_size_per_agent=16,)
+    train, num_timesteps=30000000, num_evals=15, reward_scaling=1,
+    episode_length=1000, normalize_observations=True, action_repeat=1,
+    unroll_length=40, num_minibatches=20, num_updates_per_batch=8,
+    discounting=0.999, learning_rate=1e-4, entropy_cost=3e-3, num_envs=1024, 
+    batch_size=1024, seed=0, num_agents=num_agents,
+    obs_size_per_agent=16, policy_params_fn=policy_params_fn, restore_checkpoint_path=ckpt_path / '68812800')
 
 x_data, y_data, y_dataerr = [], [], []
 times = [datetime.now()]
@@ -91,115 +107,63 @@ print(f'time to train: {times[-1] - times[1]}')
 obs_size = env.observation_size * num_agents
 action_size = env.action_size * num_agents
 
-# Create the PPO networks
-ppo_networks_module = ppo_networks.make_ppo_networks(
-    num_agents=num_agents,
-    agent_observation_size=obs_size_per_agent,
-    agent_action_size=4, # Get action size from env
-    policy_hidden_layer_sizes=(32,) * 4,  # Four hidden layers of size 32
-    value_hidden_layer_sizes=(256,) * 5, # Five hidden layers of size 256
-)
-
-model_path = 'mjx_brax_policy_simplified'
+# Save model
+model_path = 'mjx_brax_policy_simplified_v3_part2'
 model.save_params(model_path, params)
 print("Model saved to: ", model_path)
 
+# Load Model and Define Inference Function
 params = model.load_params(model_path)
 
-# inference_fn = make_inference_fn(params)
-make_policy = ppo_networks.make_inference_fn(ppo_networks_module, num_agents, obs_size_per_agent)
-jit_inference_fn = jax.jit(make_policy(params))
+# Visualize Policy
+inference_fn = make_inference_fn(params)
+jit_inference_fn = jax.jit(inference_fn)
 
-eval_env = env  # Use the instantiated environment for rollout
-
+eval_env = env
 jit_reset = jax.jit(eval_env.reset)
 jit_step = jax.jit(eval_env.step)
 
 # initialize the state
-rng = jax.random.PRNGKey(2)
+rng = jax.random.PRNGKey(0)
 state = jit_reset(rng)
 rollout = [state.pipeline_state]
 
 # grab a trajectory
-n_steps = 2000
+n_steps = 1000
 render_every = 2
 
+print_once = True 
 for i in range(n_steps):
+  if print_once:
+    print("--- INFERENCE/VISUALIZATION ---")
+    raw_obs_inference = state.obs
+    print(f"Raw observation from RoboRLEnv (state.obs): {raw_obs_inference}")
+    print(f"Raw obs shape: {raw_obs_inference.shape}, dtype: {raw_obs_inference.dtype}")
+
+    # This is what your jit_inference_fn receives after reshape
+    obs_for_inference_fn = state.obs.reshape(1, -1)
+    print(f"Observation fed to jit_inference_fn (after reshape): {obs_for_inference_fn}")
+    print(f"Input obs shape: {obs_for_inference_fn.shape}, dtype: {obs_for_inference_fn.dtype}")
+    print("---------------------------")
+    print_once = False
+
   act_rng, rng = jax.random.split(rng)
   ctrl, _ = jit_inference_fn(state.obs.reshape(1, -1), act_rng)
   reshaped_ctrl = ctrl.squeeze(0)
   state = jit_step(state, reshaped_ctrl)
   rollout.append(state.pipeline_state)
 
-  if state.done.any():
+  if state.done:
     break
-  
-# --- PRINT BALL POSITION AFTER THE LOOP ---
-print("\n--- Ball Positions During Rollout ---")
-# Get the start index for ball's x,y,z position from the environment instance
-# ball_pos_start_index = eval_env._ball_qpos_start + 4 # Index of ball's x-pos
-# ball_pos_end_index = eval_env._ball_qpos_start + 7   # Index after ball's z-pos
 
 # Decide how often to print (e.g., every 'render_every' steps, or every step)
 print_every = render_every # Match video frames
-# print_every = 1 # Print every single step
-
-for step_index, current_pipeline_state in enumerate(rollout):
-    if step_index % print_every == 0:
-        ball_qpos = current_pipeline_state.qpos # Get the qpos array
-        # # Extract the ball's x, y, z coordinates
-        # ball_position = ball_qpos[ball_pos_start_index:ball_pos_end_index]
-        # print(f"Step {step_index}: Ball Position = {ball_position}")
-# ------------------------------------------
-
-# --- PRINT ROBOT POSITION AFTER THE LOOP ---
-print("\n--- Robot 0 Positions During Rollout ---")
-
-# Select the robot ID you want to track
-robot_id_to_track = 0
-
-# Get the qpos indices for the robot's X and Y slide joints from the environment instance
-# Ensure these attributes exist and are correctly populated in your RoboRLEnv class
-try:
-    robot_x_qpos_index = eval_env._x_qpos_adr[robot_id_to_track]
-    robot_y_qpos_index = eval_env._y_qpos_adr[robot_id_to_track]
-    # You might also want the rotation (theta)
-    robot_z_rot_qpos_index = eval_env._z_qpos_adr[robot_id_to_track]
-
-    # Decide how often to print (e.g., every 'render_every' steps, or every step)
-    print_every = render_every # Match video frames
-    # print_every = 1 # Print every single step
-
-    for step_index, current_pipeline_state in enumerate(rollout):
-        if step_index % print_every == 0:
-            qpos = current_pipeline_state.qpos # Get the qpos array
-
-            # Extract the robot's x, y coordinates and rotation angle
-            robot_x_position = qpos[robot_x_qpos_index]
-            robot_y_position = qpos[robot_y_qpos_index]
-            robot_z_rotation = qpos[robot_z_rot_qpos_index] # This is the angle in radians
-
-            # You could potentially get Z position if it's not fixed, or geom positions,
-            # but x/y slides usually define the planar base position.
-
-            # print(f"Step {step_index}: Robot {robot_id_to_track} Position (x, y)=({robot_x_position:.4f}, {robot_y_position:.4f}), Rotation={robot_z_rotation:.4f} rad")
-
-except AttributeError as e:
-    print(f"Error accessing robot qpos indices in eval_env: {e}")
-    print("Make sure eval_env is an instance of RoboRLEnv and _x_qpos_adr, _y_qpos_adr, _z_qpos_adr are initialized correctly.")
-except IndexError as e:
-     print(f"Error: robot_id_to_track ({robot_id_to_track}) might be out of bounds for the number of agents.")
-# ------------------------------------------
-
-
-#------------------------
-
 desired_duration_seconds = 10.0
 total_simulation_steps = int(desired_duration_seconds / env.dt)
 print(f"Total simulation steps for {desired_duration_seconds} seconds: {total_simulation_steps}")
 n_steps = total_simulation_steps
 
-target_fps = 30
+target_fps = 31.2
 render_every = int(1.0 / (env.dt * target_fps))
 if render_every < 1:
     render_every = 1
@@ -223,3 +187,7 @@ media.write_video(
     fps=fps
 )
 print(f"Rollout saved to: {filename} with resolution {render_width}x{render_height}.")
+
+
+# export MUJOCO_GL=osmesa
+# python /home/usergpu/RoboRL/train.py
