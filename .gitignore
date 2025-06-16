@@ -1,3 +1,4 @@
 *.pyc
 trained_models/
 trained_models/
+__pycahce__
