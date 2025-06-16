@@ -9,10 +9,14 @@ This is a framework that can be used to train deep reinforcement learning algori
 Pull the repo:
 
 ```bash
-git pull <https://github.com/RoboTeamTwente/RoboRL.git>
+git pull https://github.com/RoboTeamTwente/RoboRL.git
 ```
 
+Train the model by running the train.py file.
+Be sure to modify the hyperparameters, and environment difficulty in RoboRLEnv.py.
 
+### Running the visual simulator
+To run the simulation go to /mujoco-3.3.0/bin and type ./simulate
 
 ## Current progress
 Currently we have finished the environment and have validated the physics validity to some extent. It is not glitching out or doing things it is not supposed to be doing.
