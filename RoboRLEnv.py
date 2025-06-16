@@ -129,28 +129,35 @@ class RoboRLEnv(PipelineEnv):
         #####################
 
         # Define a small margin to avoid spawning exactly on the edge
-        pos_margin = 1
-        x_min = (-self._field_width / 2) + pos_margin
-        x_max = (self._field_width / 2) - pos_margin
-        y_min = (-self._field_height / 2) + pos_margin
-        y_max = (self._field_height / 2) - pos_margin
+        # pos_margin = 2
+        # x_min = (-self._field_width / 2) + pos_margin
+        # x_max = (self._field_width / 2) - pos_margin
+        # y_min = (-self._field_height / 2) + pos_margin
+        # y_max = (self._field_height / 2) - pos_margin
+
+        x_min = -5
+        x_max = 0
+        y_min = -3.5
+        y_max = 3.5
 
         # Split RNG key for ball and agents
         rng, ball_x_rng = jax.random.split(rng)
         rng, ball_y_rng = jax.random.split(rng)
 
         # # Generate random positions for the ball
-        ball_x = jax.random.uniform(ball_x_rng, minval=x_min, maxval=x_max)
-        ball_y = jax.random.uniform(ball_y_rng, minval=y_min, maxval=y_max)
+        ball_x = jax.random.uniform(ball_x_rng, minval=1, maxval=5)
+        ball_y = jax.random.uniform(ball_y_rng, minval=-3.5, maxval=3.5)
 
         # Generate static positions for the ball
-        ball_x = 3
-        ball_y = 0
+        # ball_x = 2
+        # ball_y = 0
 
         # Ball is put on center of the field
         qpos = qpos.at[self._ball_x_slide_qpos_adr].set(ball_x)
         qpos = qpos.at[self._ball_y_slide_qpos_adr].set(ball_y)
         # jax.debug.print("Generated ball position: x={x}, y={y}", x=ball_x, y=ball_y)
+
+        initial_robot_positions = []
 
         for robot_id in range(self._num_agents):
             # Split rng for this agent's x, y, and rotation
@@ -161,13 +168,17 @@ class RoboRLEnv(PipelineEnv):
             x_pos = jax.random.uniform(agent_x_rng, minval=x_min, maxval=x_max)
             y_pos = jax.random.uniform(agent_y_rng, minval=y_min, maxval=y_max)
             rot_pos = jax.random.uniform(agent_rot_rng, minval=-jnp.pi, maxval=jnp.pi)
-            x_pos = 2.75
-            y_pos = 0
-            rot_pos = 0
+            # x_pos = 1.75
+            # y_pos = 0
+            # rot_pos = 0
+
+            initial_robot_positions.append(jnp.array([x_pos, y_pos]))
 
             qpos = qpos.at[self._x_qpos_adr[robot_id]].set(x_pos)
             qpos = qpos.at[self._y_qpos_adr[robot_id]].set(y_pos)
             qpos = qpos.at[self._z_qpos_adr[robot_id]].set(rot_pos)
+        
+        initial_dribble_pos = jnp.zeros((self._num_agents, 2))
 
         data = self.pipeline_init(qpos, qvel)
 
@@ -182,6 +193,8 @@ class RoboRLEnv(PipelineEnv):
             'is_nan': zero,
             'did_dribble_this_episode': zero,       # This will become the 0-1 trigger
             '_internal_dribble_latch': zero,        # New: internal latch
+            'attempted_kick_while_dribbling': zero,
+
             # Rewards
             'rew_goal': zero,
             'rew_ball_to_goal': zero,
@@ -189,9 +202,20 @@ class RoboRLEnv(PipelineEnv):
             'rew_ball_facing': zero,
             'rew_dribbling': zero,
             'pen_out_of_bounds': zero,
+
+            # Dribbling/ tracking penalties
+            'dribbling_distance_from_start': zero,
+            'pen_dribbling': zero,
         }
 
-        return State(data, obs, reward, done, metrics)
+        info = {
+            'steps': 0,
+            'truncation': jnp.zeros(()),
+            'initial_dribble_pos': jnp.zeros((self._num_agents, 2)),
+            'has_dribbled_yet': jnp.zeros(self._num_agents),
+        }
+
+        return State(data, obs, reward, done, metrics, info=info)
 
     def _post_init(self) -> None:
         """
@@ -201,7 +225,8 @@ class RoboRLEnv(PipelineEnv):
     def _get_reward(self,
                 obs: jnp.ndarray,
                 is_in_left_goal: bool, 
-                is_in_right_goal: bool) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+                is_in_right_goal: bool,
+                dribbled_too_far_flag: bool) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         """
         Compute reward function for all agents, calculating both individual rewards
         and a combined team reward.
@@ -222,11 +247,11 @@ class RoboRLEnv(PipelineEnv):
 
         def _get_dense_ball_to_goal_reward(ball_pos, ball_vel):
             """
-            Computes a dense reward based on the ball's velocity towards the opponent's goal.
+            Computes a dense reward based on the ball's velocity towards a point
+            inside the opponent's goal.
 
-            This reward is positive if the ball is moving generally towards the goal,
-            negative if it's moving away, and zero if it's stationary or its
-            movement is perpendicular to the goal direction.
+            This reward is positive if the ball is moving generally towards the target point,
+            and zero otherwise (if stationary, moving away, or perpendicular).
 
             We approximate ball has to traverse 8.5 meters at max.
             At 60 hz control loop this can get up to 510 (unscaled).
@@ -241,7 +266,10 @@ class RoboRLEnv(PipelineEnv):
                 that is directed towards the center of the opponent's goal.
             """
 
-            goal_pos = jnp.array([self._field_width / 2, 0.0, ball_pos[2]])
+            goal_depth_offset = 0.19 # This is directly at the geom
+            target_goal_x = (self._field_width / 2) + goal_depth_offset
+            target_goal_y = 0.0
+            goal_pos = jnp.array([target_goal_x, target_goal_y, ball_pos[2]])
 
             ball_to_goal_vector = goal_pos[:2] - ball_pos[:2]
             ball_to_goal_distance = jnp.linalg.norm(ball_to_goal_vector) + 1e-10
@@ -253,7 +281,16 @@ class RoboRLEnv(PipelineEnv):
             # jax.debug.print("_get_dense_ball_to_goal_reward - ball_pos: {bp}, ball_vel: {bv}", bp=ball_pos, bv=ball_vel)
             # # --- END DEBUG ---
 
-            return ball_vel_towards_goal
+            is_ball_in_right_goal_flag = self._is_in_right_goal(ball_pos) # Returns 1.0 if in goal, 0.0 otherwise
+
+            # Conditionally clip the reward
+            final_dense_reward = jnp.where(
+                is_ball_in_right_goal_flag > 0.5,       # True if is_ball_in_right_goal_flag is 1.0
+                jnp.maximum(0., ball_vel_towards_goal), # If true
+                ball_vel_towards_goal                   # If false
+            )
+
+            return final_dense_reward
         
         def _get_dense_base_to_ball_reward(robot_pos_2d: jnp.ndarray,
                                                     robot_vel_2d: jnp.ndarray,
@@ -322,7 +359,7 @@ class RoboRLEnv(PipelineEnv):
             
             return facing_ball_score
         
-        def _get_single_reward(agent_obs):
+        def _get_single_reward(agent_obs, dribbled_too_far_flag: jnp.ndarray):
             """
             Compute reward for a single agent.
             
@@ -347,26 +384,29 @@ class RoboRLEnv(PipelineEnv):
 
             # All dense rewards combined
             dense_ball_to_goal_reward = _get_dense_ball_to_goal_reward(ball_pos, ball_vel)
-            dense_base_to_ball_reward = _get_dense_base_to_ball_reward(robot_pos, robot_vel, robot_orientation, ball_pos[:2]) * 0  # Pass only 2D ball position
-            dense_ball_facing_reward = _get_dense_facing_ball_reward(robot_pos, robot_orientation, ball_pos[:2]) * 0 # Only pass 2D ball position
+            dense_base_to_ball_reward = _get_dense_base_to_ball_reward(robot_pos, robot_vel, robot_orientation, ball_pos[:2]) # Pass only 2D ball position
+            dense_ball_facing_reward = _get_dense_facing_ball_reward(robot_pos, robot_orientation, ball_pos[:2]) # Only pass 2D ball position
 
             # Now scale them:
-            dense_ball_to_goal_reward_scaled = dense_ball_to_goal_reward * 2 # Can reach 510 max
-            dense_base_to_ball_reward_scaled = dense_base_to_ball_reward * 0.01 # Each tick only counts positive vectors, and is scaled by velocity. Can reach 2.4 max. 
-            dense_ball_facing_reward_scaled = dense_ball_facing_reward * 0.001 # Can reach 10 max
+            dense_ball_to_goal_reward_scaled = dense_ball_to_goal_reward * 0.5 # At 0.4 and ball 3 meters away, about 35.6
+            dense_base_to_ball_reward_scaled = dense_base_to_ball_reward * 0.04 # At 0.4 and robot 0.75m reward, about 34
+            dense_ball_facing_reward_scaled = dense_ball_facing_reward * 0.02 # Can reach 20 max.
+
+            # 1, 0.4, 0.02
 
             # Logic here is that by doing nothing, the robot gets a negative reward of -30, just from existing.
             # If it goes to the ball, it gains about 2.4. It gets massively more 
 
             # # is_dribbling reward
-            dribbling_bonus = jnp.where(is_dribbling > 0, 0.04, 0.0)
+            dribbling_bonus = jnp.where(is_dribbling > 0, 0.1, 0.0)
+            dribbled_too_far_penalty = jnp.where(dribbled_too_far_flag > 0, -0.05, 0.0)
             
             # General rewards
             goal_reward = jnp.where(is_in_right_goal, 500.0, 0.0)
             out_of_bounds_penalty = jnp.where(is_out_of_bounds, -50.0, 0.0)
-            time_penalty = -0.03
+            time_penalty = -0.05
             
-            total_reward = goal_reward + dense_ball_to_goal_reward_scaled + dense_base_to_ball_reward_scaled + dense_ball_facing_reward_scaled + out_of_bounds_penalty + time_penalty + dribbling_bonus # By doing nothing agent receives 30 penalty over 1000 steps
+            total_reward = goal_reward + dense_ball_to_goal_reward_scaled + dense_base_to_ball_reward_scaled + dense_ball_facing_reward_scaled + out_of_bounds_penalty + time_penalty + dribbling_bonus
             
             reward_components = {
                 'rew_goal': goal_reward,
@@ -375,12 +415,15 @@ class RoboRLEnv(PipelineEnv):
                 'rew_ball_facing': dense_ball_facing_reward_scaled,
                 'rew_dribbling': dribbling_bonus,
                 'pen_out_of_bounds': out_of_bounds_penalty,
+                'pen_dribbling': dribbled_too_far_penalty
             }
 
             return total_reward, reward_components
         
         # 1. Unpack the two outputs of vmap
-        all_total_rewards_array, all_components_pytree = jax.vmap(_get_single_reward)(agent_obs_batch)
+        all_total_rewards_array, all_components_pytree = jax.vmap(_get_single_reward)(
+            agent_obs_batch, dribbled_too_far_flag
+        )
 
         # 2. Sum only the array of total rewards
         final_total_reward = jnp.sum(all_total_rewards_array)
@@ -394,109 +437,84 @@ class RoboRLEnv(PipelineEnv):
         return final_total_reward, final_components_dict
 
     def step(self, state: State, action: jnp.ndarray) -> State:
-
-        """
-        Runs one timestep of the environment's dynamics.
-
-        Args:
-        state: State of the environment with type mjx_env.State.
-        action: Action to take with shape [num_agents*action_size_per_agent].
-            Each row contains the actions for one agent.
-
-        Returns:
-        state: Updated state of the environment with type mjx_env.State.
-        """
-
-        is_dribbling_flag = state.obs[15::16]
-        dribbler_actuator_signal = jnp.where(is_dribbling_flag > 0.5, -1.0, 0.0)
-
-        # Input 'action' is shape [4]: [x_vel, y_vel, rot_vel, kicker]
+        """Runs one timestep of the environment's dynamics."""
+        
+        # Action processing and physics
+        is_dribbling_flag_prev = state.obs[15::self._obs_size]
+        dribbler_actuator_signal = jnp.where(is_dribbling_flag_prev > 0.5, -1.0, 0.0)
+        
         policy_vel_rot_actions = action[:3]
-        final_vel_rot_actions = policy_vel_rot_actions * 3.0 # Scale velocity/rotation actions from policy range [-1, 1] to actuator ctrlrange [-3, 3]
-
-        policy_kicker_action = action[3] # This is a number between 0 and 1
-
-        kicker_trigger_threshold = 0.5 # Temporarily disable kicker.
+        final_vel_rot_actions = policy_vel_rot_actions * 2.0
+        policy_kicker_action = action[3] * 1 # Not currently scaled
+        
+        kicker_trigger_threshold = 0.5
         is_attempting_kick_impulse = jnp.logical_and(
             policy_kicker_action > kicker_trigger_threshold,
-            is_dribbling_flag
+            is_dribbling_flag_prev
         )
-
-        # Combine everything into a single action array to put into pipeline_step
-        # Based on the MuJoCo XML, the actuators are x_vel, y_vel, rot_vel, dribbler, kicker_force_actuator.
         pipeline_actions = jnp.concatenate([
-            final_vel_rot_actions,                                        # [3] for x_vel, y_vel, rot_vel
-            dribbler_actuator_signal,                                     # [1] sticky dribbler, activated with -1
-            is_attempting_kick_impulse                                    # [1] for kicker_force_actuator (impulse kick)
+            final_vel_rot_actions,
+            dribbler_actuator_signal,
+            is_attempting_kick_impulse
         ])
-
-        # jax.debug.print("step - pipeline_actions fed to physics: {pa}", pa=pipeline_actions)
         
         data0 = state.pipeline_state
         data = self.pipeline_step(data0, pipeline_actions)
+        obs = self._get_obs(data)
 
-        obs = self._get_obs(data) # Huge jnp array of all agent observations
+        # Dribbling penalty logic
+        is_dribbling_now_per_agent = obs[15::self._obs_size]
+        current_robot_positions = obs.reshape(self._num_agents, self._obs_size)[:, 0:2]
 
-        # Extract environment conditions - these are the same for all agents
-        # and are at the end of the last agent's observation
+        is_too_far, new_initial_dribble_pos, new_has_dribbled_yet, dribbling_distance = self._dribbled_too_far(
+            current_robot_pos=current_robot_positions,
+            is_dribbling_now=is_dribbling_now_per_agent,
+            has_dribbled_yet_prev=state.info['has_dribbled_yet'],
+            initial_dribble_pos_prev=state.info['initial_dribble_pos']
+        )
+        
+        # Reward calculation
         is_out_of_bounds = obs[-4]
         is_in_left_goal = obs[-3]
         is_in_right_goal = obs[-2]
-        is_dribbling = obs[-1]
+        reward, reward_components_dict = self._get_reward(obs, is_in_left_goal, is_in_right_goal, is_too_far)
+        
+        # Update metrics and state
+        is_nan = jnp.logical_or(jnp.isnan(data.qpos).any(), jnp.isnan(data.qvel).any()).astype(jnp.float32)
 
-        reward, reward_components_dict = self._get_reward(obs, is_in_left_goal, is_in_right_goal) # also outputs dict to check rewards
-
-        is_nan = jnp.logical_or(
-        jnp.isnan(data.qpos).any(),
-        jnp.isnan(data.qvel).any()
-        ).astype(jnp.float32)
-
-        # Update metrics
         metrics = dict(state.metrics)
         metrics['out_of_bounds'] = is_out_of_bounds
         metrics['left_goal'] = is_in_left_goal
         metrics['right_goal'] = is_in_right_goal
-        metrics['is_dribbling'] = is_dribbling
         metrics['is_nan'] = is_nan
-
-        # Get metric for checking if it dribbled at all this episode.
-
-        # 1. Get the latch status from the *previous* step
-        latch_was_off_previously = (state.metrics['_internal_dribble_latch'] < 0.5)
+        metrics['attempted_kick_while_dribbling'] = jnp.any(is_attempting_kick_impulse).astype(jnp.float32)
+        metrics['dribbling_distance_from_start'] = jnp.sum(dribbling_distance)
         
-        # 2. Is dribbling happening in the current step?
-        dribbling_active_now = (is_dribbling > 0.5)
-
-        # 3. Set to 1.0 only if this is the FIRST dribble event this episode
-        is_first_dribble_event = jnp.logical_and(
-            dribbling_active_now,
-            latch_was_off_previously
-        )
-        metrics['did_dribble_this_episode'] = is_first_dribble_event.astype(jnp.float32)
-
-        # 4. Update the internal latch for the next step using the simple maximum logic
-        metrics['_internal_dribble_latch'] = jnp.maximum(
-            state.metrics['_internal_dribble_latch'], 
-            is_dribbling
-        )
-
-        # Add all reward components to the metrics dictionary
-        # The Brax training loop will sum these values over an episode.
+        is_dribbling_overall = jnp.any(is_dribbling_now_per_agent).astype(jnp.float32)
+        metrics['is_dribbling'] = is_dribbling_overall
+        
+        latch_was_off_previously = (metrics['_internal_dribble_latch'] < 0.5)
+        dribbling_active_now = (is_dribbling_overall > 0.5)
+        metrics['did_dribble_this_episode'] = jnp.logical_and(dribbling_active_now, latch_was_off_previously).astype(jnp.float32)
+        metrics['_internal_dribble_latch'] = jnp.maximum(metrics['_internal_dribble_latch'], is_dribbling_overall)
+        
         for key, value in reward_components_dict.items():
             metrics[key] = value
 
-        possible_done_conditions = jnp.array([
-            is_out_of_bounds,
-            is_in_left_goal,
-            is_in_right_goal,
-            is_nan,
-        ])
-        game_ending_condition = jnp.any(possible_done_conditions)
+        done = jnp.any(jnp.array([is_out_of_bounds, is_in_left_goal, is_in_right_goal, is_nan])).astype(jnp.float32)
 
-        done = game_ending_condition.astype(jnp.float32)
+        # Here's the change: Update the `info` dictionary with the new memory.
+        new_info = state.info.copy()
+        new_info['has_dribbled_yet'] = new_has_dribbled_yet
+        new_info['initial_dribble_pos'] = new_initial_dribble_pos
 
         return state.replace(
-            pipeline_state=data, obs=obs, reward=reward, done=done, metrics=metrics
+            pipeline_state=data,
+            obs=obs,
+            reward=reward,
+            done=done,
+            metrics=metrics,
+            info=new_info
         )
 
     def _get_obs(self, data: mjx.Data) -> jnp.ndarray:
@@ -566,11 +584,23 @@ class RoboRLEnv(PipelineEnv):
         # Field dimensions from the XML (12m × 9m field)
         # The boundary lines are at x=±6.0, y=±4.5
         x, y, _ = ball_pos
+        x_abs = jnp.abs(x)
+        y_abs = jnp.abs(y)
 
-        return jnp.logical_or(
-            jnp.greater(jnp.abs(x), self._field_width/2),
-            jnp.greater(jnp.abs(y), self._field_height/2)
-        ).astype(jnp.float32)
+        field_half_width = self._field_width / 2   # 6.0
+        field_half_height = self._field_height / 2 # 4.5
+        goal_mouth_half_width = 0.9
+
+        # Ball is out on top or bottom
+        out_top_bottom_endlines = jnp.greater(y_abs, field_half_height)
+
+        # Ball is out on either left or right side, and not in either of the goals.
+        out_endlines_not_in_goal = jnp.logical_and(
+            jnp.greater(x_abs, field_half_width),       # Beyond the x-limit of the field
+            jnp.greater_equal(y_abs, goal_mouth_half_width) # And outside the y-span of the goal
+        )
+
+        return jnp.logical_or(out_top_bottom_endlines, out_endlines_not_in_goal).astype(jnp.float32)
 
     def _is_in_left_goal(self, ball_pos):
         """Check if the ball is in the left goal.
@@ -737,6 +767,45 @@ class RoboRLEnv(PipelineEnv):
             is_dribbling
         ])
     
+    def _dribbled_too_far(self,
+                            current_robot_pos: jnp.ndarray,
+                            is_dribbling_now: jnp.ndarray,
+                            has_dribbled_yet_prev: jnp.ndarray,
+                            initial_dribble_pos_prev: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+            """
+            Checks if the robot has dribbled too far from its initial dribble point.
+            Handles batched inputs for multi-agent support.
+            """
+            # Check if this is the very first time each agent is dribbling this episode
+            is_first_dribble_event = jnp.logical_and(
+                is_dribbling_now > 0.5,
+                has_dribbled_yet_prev < 0.5
+            )
+
+            # Latch the initial dribble position for each agent that starts dribbling.
+            # The [:, None] correctly broadcasts the condition for multi-agent case.
+            new_initial_dribble_pos = jnp.where(
+                is_first_dribble_event[:, None],
+                current_robot_pos,
+                initial_dribble_pos_prev
+            )
+
+            # Latch the 'has_dribbled_yet' flag. Once true, it stays true.
+            new_has_dribbled_yet = jnp.maximum(has_dribbled_yet_prev, is_dribbling_now)
+
+            # Calculate distance from the initial point, but only if a dribble has occurred.
+            dribbling_distance = jnp.where(
+                new_has_dribbled_yet > 0.5,
+                jnp.linalg.norm(current_robot_pos - new_initial_dribble_pos, axis=-1),
+                0.0
+            )
+            
+            # Convert the distance check to a boolean flag for each agent.
+            is_too_far = dribbling_distance > 2.0
+
+            # MODIFIED: Return the distance as well for logging.
+            return is_too_far, new_initial_dribble_pos, new_has_dribbled_yet, dribbling_distance
+        
     @property
     def xml_path(self) -> str:
         return self._xml_path

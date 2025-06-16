@@ -51,7 +51,7 @@ obs_size_per_agent = 16
 # # Instantiate environment
 env = RoboRLEnv(num_agents=num_agents)
 
-relative_ckpt_path = epath.Path('./models_3')
+relative_ckpt_path = epath.Path('./models_10')
 ckpt_path = relative_ckpt_path.resolve()
 ckpt_path.mkdir(parents=True, exist_ok=True)
 
@@ -64,12 +64,12 @@ def policy_params_fn(current_step, make_policy, params):
 
 # Train
 train_fn = functools.partial(
-    train, num_timesteps=30000000, num_evals=15, reward_scaling=1,
+    train, num_timesteps=0, num_evals=15, reward_scaling=1,
     episode_length=1000, normalize_observations=True, action_repeat=1,
     unroll_length=40, num_minibatches=20, num_updates_per_batch=8,
     discounting=0.999, learning_rate=1e-4, entropy_cost=3e-3, num_envs=1024, 
     batch_size=1024, seed=0, num_agents=num_agents,
-    obs_size_per_agent=16, policy_params_fn=policy_params_fn, restore_checkpoint_path=ckpt_path / '68812800')
+    obs_size_per_agent=16, policy_params_fn=policy_params_fn, restore_checkpoint_path=ckpt_path / '0')
 
 x_data, y_data, y_dataerr = [], [], []
 times = [datetime.now()]
@@ -100,17 +100,17 @@ def progress(num_steps, metrics):
 
 make_inference_fn, params, _= train_fn(environment=env, progress_fn=progress)
 
-print(f'time to jit: {times[1] - times[0]}')
-print(f'time to train: {times[-1] - times[1]}')
+# print(f'time to jit: {times[1] - times[0]}')
+# print(f'time to train: {times[-1] - times[1]}')
 
 # Determine observation and action sizes
 obs_size = env.observation_size * num_agents
 action_size = env.action_size * num_agents
 
 # Save model
-model_path = 'mjx_brax_policy_simplified_v3_part2'
+model_path = 'random'
 model.save_params(model_path, params)
-print("Model saved to: ", model_path)
+# print("Model saved to: ", model_path)
 
 # Load Model and Define Inference Function
 params = model.load_params(model_path)
@@ -156,8 +156,7 @@ for i in range(n_steps):
   if state.done:
     break
 
-# Decide how often to print (e.g., every 'render_every' steps, or every step)
-print_every = render_every # Match video frames
+print_every = render_every
 desired_duration_seconds = 10.0
 total_simulation_steps = int(desired_duration_seconds / env.dt)
 print(f"Total simulation steps for {desired_duration_seconds} seconds: {total_simulation_steps}")
@@ -170,19 +169,18 @@ if render_every < 1:
 fps = 1.0 / env.dt / render_every
 print(f"Target FPS: {target_fps}, calculated render_every: {render_every}, actual FPS: {fps}")
 
-# Define your desired resolution
 render_width = 1280
-render_height = 720 # Example: 720p HD
+render_height = 720
 
-# Save the video to MP4 using the specified width and height
-filename = "loaded_model_rollout_large.mp4" # Changed filename slightly
+# Save the video to MP4 
+filename = "loaded_model_rollout_large.mp4"
 media.write_video(
     filename,
     eval_env.render(
         rollout[::render_every],
         camera='top',
-        width=render_width,  # Pass the desired width
-        height=render_height # Pass the desired height
+        width=render_width,
+        height=render_height
     ),
     fps=fps
 )
