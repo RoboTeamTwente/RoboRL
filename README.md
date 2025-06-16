@@ -1,5 +1,6 @@
 # RoboRL
 
+<<<<<<< HEAD
 ## What is RoboRL?
 RoboRL is RoboTeamTwente's attempt to create a simple, easy-to-use, and scalable reinforcement learning environment for the small size league (SSL).
 We use [MuJoCo](https://github.com/deepmind/mujoco) as our physics engine and [Brax](https://github.com/google/brax) as our RL framework. More specifically, we use the GPU accelerated version of mujoco called MujocoMJX.
@@ -41,4 +42,3 @@ It is slow when there are a high number of possible collissions (like our Robocu
 It also does not look like it's made for driving robots, but more for modelling joints/ robotics.
 
 Authors from ETH Zurich have demonstrated a similar implementation, but in IsaacLabs which is successful. [Paper](https://arxiv.org/abs/2409.20326)
-
