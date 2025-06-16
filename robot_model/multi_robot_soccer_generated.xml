@@ -4,7 +4,13 @@
     <mesh name="robot_stl" file="robot_decimated.stl" scale="1 1 1"/>
   </asset>
 
+  <default>
+    <geom contype="0" conaffinity="0"/>
+  </default>
+
   <worldbody>
+    <camera name="top" pos="0 0 12"/>                 
+
     <geom name="field" type="plane" size="7.5 6 0.01" pos="0 0 -0.01" rgba="0.48 0.78 0.27 1"/>
 
     <body name="left_goal" pos="-6 0 0">
@@ -43,32 +49,17 @@
         <geom name="robot_mesh_0" type="mesh" mesh="robot_stl" rgba="0 0 1 1" mass="5"/>
 
         <body name="kicker_body_0" pos="0 0.065 0.02">
-            <joint name="kicker_extend_0" type="slide" axis="0 1 0" limited="true" range="0 0.1"
-                  damping="0" stiffness="0" armature="0"/>
-
-            <geom name="kicker_plate_geom_0" type="box" size="0.055 0.004 0.025" rgba="1 0.5 0 1"
+            <geom name="kicker_plate_geom_0" type="box" size="0.04 0.004 0.02" rgba="1 0.5 0 1"
                   mass="0.5" friction="1.8 0.005 0.05" solref="0.01 1" solimp="0.95 0.98 0.001"/>
+            <site name="kicker_force_site_0" pos="0.04 0 0" size="0.01" rgba="1 0 0 0.5" type="sphere"/>
         </body>
     </body>
 
-    <body name="robot_planar_1" pos="-1 0 0">
-        <joint name="x_slide_1" type="slide" axis="1 0 0" pos="0 0 0" damping="0.8" armature="0.6"/>
-        <joint name="y_slide_1" type="slide" axis="0 1 0" pos="0 0 0" damping="0.8" armature="0.6"/>
-        <joint name="z_rotate_1" type="hinge" axis="0 0 1" pos="0 0 0" damping="0" armature="0.5"/>
-
-        <geom name="robot_mesh_1" type="mesh" mesh="robot_stl" rgba="0 0 1 1" mass="5"/>
-
-        <body name="kicker_body_1" pos="0 0.065 0.02">
-            <joint name="kicker_extend_1" type="slide" axis="0 1 0" limited="true" range="0 0.1"
-                  damping="0" stiffness="0" armature="0"/>
-
-            <geom name="kicker_plate_geom_1" type="box" size="0.055 0.004 0.025" rgba="1 0.5 0 1"
-                  mass="0.5" friction="1.8 0.005 0.05" solref="0.01 1" solimp="0.95 0.98 0.001"/>
-        </body>
-    </body>
-
-    <body name="golf_ball" pos="0 0 0.0215"> <joint name= "ball_joint" type="free"/>
-        <geom name="golf_ball_geom" type="sphere" size="0.0215" rgba="1 1 1 1" mass="0.046" friction="2.408 0.01 0.0035" condim="6"/>
+    <body name="golf_ball" pos="0 0 0.0115">
+        <joint name="ball_x_slide" type="slide" axis="1 0 0" limited="false" damping="0.05" armature="0.001"/>
+        <joint name="ball_y_slide" type="slide" axis="0 1 0" limited="false" damping="0.05" armature="0.001"/>
+        <geom name="golf_ball_geom" type="sphere" size="0.0115" rgba="1 0 0 1" mass="0.046" friction="0.3 0.1 0.1" solref="0.01 1" solimp="0.9 0.98 0.001"/>
+        <site name="ball_center_site" pos="0 0 0" size="0.005" rgba="1 1 0 0.5" type="sphere"/>
     </body>
 
   </worldbody>
@@ -78,12 +69,11 @@
     <velocity name="x_vel_0" joint="x_slide_0" kv="22" ctrlrange="-3 3"/>
     <velocity name="y_vel_0" joint="y_slide_0" kv="22" ctrlrange="-3 3"/>
     <velocity name="rot_vel_0" joint="z_rotate_0" kv="5"/>
-    <position name="kicker_pos_0" joint="kicker_extend_0" kp="800" kv="20" ctrlrange="0 1" ctrllimited="true"/>
+    <adhesion name="dribbler_0" body="golf_ball" ctrlrange="0 1" gain="0.2"/>
 
-    <velocity name="x_vel_1" joint="x_slide_1" kv="22" ctrlrange="-3 3"/>
-    <velocity name="y_vel_1" joint="y_slide_1" kv="22" ctrlrange="-3 3"/>
-    <velocity name="rot_vel_1" joint="z_rotate_1" kv="5"/>
-    <position name="kicker_pos_1" joint="kicker_extend_1" kp="800" kv="20" ctrlrange="0 1" ctrllimited="true"/>
+    <general name="kicker_force_actuator_0" dyntype="none" gaintype="fixed" biastype="none"
+             site="ball_center_site" refsite="kicker_force_site_0"
+             ctrlrange="0 1" forcelimited="true" forcerange="0 500"/>
 
     </actuator>
 
@@ -92,10 +82,6 @@
     <pair geom1="robot_mesh_0" geom2="golf_ball_geom"/>
     <pair geom1="kicker_plate_geom_0" geom2="golf_ball_geom"/>
     <exclude body1="robot_planar_0" body2="kicker_body_0"/>
-
-    <pair geom1="robot_mesh_1" geom2="golf_ball_geom"/>
-    <pair geom1="kicker_plate_geom_1" geom2="golf_ball_geom"/>
-    <exclude body1="robot_planar_1" body2="kicker_body_1"/>
 
     </contact>
 

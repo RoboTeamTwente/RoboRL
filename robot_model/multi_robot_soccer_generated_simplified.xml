@@ -1,0 +1,106 @@
+<mujoco model="robot_soccer_v3"> <option gravity="0 0 -9.81"
+          timestep="0.002"
+          solver="Newton"          iterations="10"           ls_iterations="15"       jacobian="dense">        <flag eulerdamp="disable"/>      </option>
+  <default>
+    <geom contype="0" conaffinity="0" group="1"/>
+    <default class="visual">
+       <geom contype="0" conaffinity="0" group="0"/> </default>
+    <default class="collision">
+        <geom contype="1" conaffinity="1" group="1" friction="0.7 0.1 0.1" solref="0.02 1" solimp="0.9 0.95 0.001"/> </default>
+  </default>
+  <asset>
+    <material name="dummy_material_for_mjx" rgba="0.8 0.8 0.8 1"/> 
+    <mesh name="robot_stl" file="robot_decimated.stl" scale="1 1 1"/>
+  </asset>
+  <visual>
+    <global offwidth="1280" offheight="720"/>
+    <map znear="0.01"/>
+  </visual>
+  <worldbody>
+    <camera name="top" pos="0 0 15" zaxis="0 0 1"/>
+
+    <geom name="field" type="plane" size="7.5 6 0.5" pos="0 0 0" class="collision" rgba="0.48 0.78 0.27 1"/>
+
+    <body name="left_goal" pos="-6 0 0">
+        <site name="left_goal_line" pos="-0.1 0 0.001" size="0.1 0.9 0.001" rgba="1 0 0 0.5" type="box" class="visual"/>
+        <geom name="left_goal_side_top" type="box" size="0.1 0.01 0.09" pos="-0.1 0.9 0.09" class="collision" rgba="0.1 0.1 0.8 1"/>
+        <geom name="left_goal_side_bottom" type="box" size="0.1 0.01 0.09" pos="-0.1 -0.9 0.09" class="collision" rgba="0.1 0.1 0.8 1"/>
+        <geom name="left_goal_backside" type="box" pos="-0.2 0 0.09" size="0.01 0.9 0.09" class="collision" rgba="0.1 0.1 0.8 0.7"/>
+    </body>
+    <body name="right_goal" pos="6 0 0">
+        <site name="right_goal_line" pos="0.1 0 0.001" size="0.1 0.9 0.001" rgba="1 0 0 0.5" type="box" class="visual"/>
+        <geom name="right_goal_side_top" type="box" size="0.1 0.01 0.09" pos="0.1 0.9 0.09" class="collision" rgba="0.1 0.1 0.8 1"/>
+        <geom name="right_goal_side_bottom" type="box" size="0.1 0.01 0.09" pos="0.1 -0.9 0.09" class="collision" rgba="0.1 0.1 0.8 1"/>
+        <geom name="right_goal_backside" type="box" pos="0.2 0 0.09" size="0.01 0.9 0.09" class="collision" rgba="0.1 0.1 0.8 0.7"/>
+    </body>
+
+    <site name="field_line_north" pos="0 4.5 0.001" size="6 0.008 0.001" rgba="1 1 1 1" type="box" class="visual"/>
+    <site name="field_line_south" pos="0 -4.5 0.001" size="6 0.008 0.001" rgba="1 1 1 1" type="box" class="visual"/>
+    <site name="field_line_east" pos="6 0 0.001" size="0.008 4.5 0.001" rgba="1 1 1 1" type="box" class="visual"/>
+    <site name="field_line_west" pos="-6 0 0.001" size="0.008 4.5 0.001" rgba="1 1 1 1" type="box" class="visual"/>
+    <site name="field_line_center_vert" pos="0 0 0.001" size="0.008 4.5 0.001" rgba="1 1 1 1" type="box" class="visual"/>
+    <site name="field_line_center_hor" pos="0 0 0.001" size="6 0.008 0.001" rgba="1 1 1 1" type="box" class="visual"/>
+
+    <body name="robot_planar_0" pos="0 0 0">
+        <joint name="x_slide_0" type="slide" axis="1 0 0" damping="1.0" armature="0.1" limited="false"/>
+        <joint name="y_slide_0" type="slide" axis="0 1 0" damping="1.0" armature="0.1" limited="false"/>
+        <joint name="z_rotate_0" type="hinge" axis="0 0 1" damping="0.5" armature="0.1" limited="false"/>
+
+        <site name="beam_emitter_site_0" pos="0.072 0.0395 0.02" zaxis="0 -1 0" type="sphere" size="0.002" rgba="1 0.5 0 0.5" />
+        
+        <geom name="robot_base_collision_0" type="mesh" mesh="robot_stl" pos="0 0 0.001" class="collision" rgba="0.2 0.2 0.8 1" mass="4.9" solref="0.01 1.5" axisangle="0 0 1 -90"/>
+
+        <body name="kicker_body_0" pos="0.065 0 0.02"> 
+          <site name="kicker_force_site_0" pos="0.021 0 0.0021" size="0.021" rgba="1 0 0 0.5" type="sphere"/>
+          <geom name="kicker_cradle_left_0" type="box" class="collision" rgba="1 0.5 0 1" mass="0.003"
+                pos="0.008 0.0415 -0.003"   size="0.005 0.0015 0.015"/>  
+          <geom name="kicker_cradle_right_0" type="box" class="collision" rgba="1 0.5 0 1" mass="0.003"
+                pos="0.008 -0.0415 -0.003"  size="0.005 0.0015 0.015"/>
+        </body>
+    </body>
+
+    <body name="golf_ball" pos=" 0 0 0.021">
+        <joint name="ball_x_slide" type="slide" axis="1 0 0" limited="false" damping="0.03" armature="0.0001"/>
+        <joint name="ball_y_slide" type="slide" axis="0 1 0" limited="false" damping="0.03" armature="0.0001"/>
+        <geom name="golf_ball_geom" type="sphere" size="0.021" class="collision" rgba="1 0 0 1" mass="0.046" friction="0.4 0.01 0.01" solref="0.01 1" solimp="0.9 0.98 0.001"/>
+        <site name="ball_center_site" pos="0 0 0" size="0.005" rgba="1 1 0 0.5" type="sphere"/>
+    </body>
+
+  </worldbody>
+  <actuator>
+
+    <velocity name="x_vel_0" joint="x_slide_0" kv="18" ctrlrange="-2 2"/>
+    <velocity name="y_vel_0" joint="y_slide_0" kv="18" ctrlrange="-2 2"/>
+    <velocity name="rot_vel_0" joint="z_rotate_0" kv="6"/>
+
+    <general name="dribbler_actuator_0" dyntype="none" gaintype="fixed" biastype="none"
+        site="ball_center_site" refsite="kicker_force_site_0"
+        ctrlrange="-1 0" forcelimited="true" forcerange="-0.1 0"/> 
+    <!-- was -0.3. Now we increase it. -->
+
+    <general name="kicker_force_actuator_0" dyntype="none" gaintype="fixed" biastype="none"
+        site="ball_center_site" refsite="kicker_force_site_0"
+        ctrlrange="0 1" forcelimited="false" forcerange="0 1" gainprm="8"/> 
+        <!-- gainrpm=15 was too hard. See model 8 -->
+
+  </actuator>
+
+  <sensor>
+    <rangefinder name="kicker_beam_rf_0" site="beam_emitter_site_0" cutoff="0.08"/>
+  </sensor>
+
+  <contact>
+    <pair geom1="golf_ball_geom" geom2="left_goal_side_top"/>
+    <pair geom1="golf_ball_geom" geom2="left_goal_side_bottom"/>
+    <pair geom1="golf_ball_geom" geom2="left_goal_backside"/>
+    <pair geom1="golf_ball_geom" geom2="right_goal_side_top"/>
+    <pair geom1="golf_ball_geom" geom2="right_goal_side_bottom"/>
+    <pair geom1="golf_ball_geom" geom2="right_goal_backside"/>
+
+    <exclude body1="robot_planar_0" body2="kicker_body_0"/>
+    
+    <pair geom1="kicker_cradle_left_0" geom2="golf_ball_geom"/>
+    <pair geom1="kicker_cradle_right_0" geom2="golf_ball_geom"/>
+
+  </contact>
+  </mujoco>
