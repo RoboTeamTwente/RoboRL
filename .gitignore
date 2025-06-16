@@ -1,4 +1,4 @@
 *.pyc
 trained_models/
-trained_models/
-__pycahce__
+trained_policies/
+__pycache__
