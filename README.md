@@ -21,11 +21,21 @@ pip install brax
 git pull https://github.com/RoboTeamTwente/RoboRL.git
 ```
 
+Install[MujocoMJX](https://mujoco.readthedocs.io/en/stable/overview.html).
+
 Train the model by running the train.py file.
 Be sure to modify the hyperparameters, and environment difficulty in RoboRLEnv.py.
 
 ### Running the visual simulator
 To run the simulation go to /mujoco-3.3.0/bin and type ./simulate
+
+### Troubleshooting
+If the video is not saving try running export MUJOCO_GL=osmesa
+
+#### RL
+If the agent is not learning, try to play with the reward functions. Generally we found that we had to make it really easy for the agent to get any meaningful dense reward.
+Also tune the hyperparameters. The ones currently in train.py should provide a good baseline.
+To just run inference or restart from a checkpoint, fill in the checkpoint number into: restore_checkpoint_path=ckpt_path / '0' as well as model_path = ''
 
 ## Current progress
 Currently we have finished the environment and have validated the physics validity to some extent. It is not glitching out or doing things it is not supposed to be doing.
@@ -52,7 +62,6 @@ Authors from ETH Zurich have demonstrated a similar implementation, but in Isaac
 This project was a bit ad-hoc put together and done in three months, and we have not had the time to properly implement it for a more complex environment. 
 And getting a version of IsaacLabs to work was definately going to take a lot of time.
 
-
 ## Tips and tricks
 
 ### Training
@@ -61,4 +70,3 @@ We had the best success by using curriculum learning. We started with putting a 
 
 ### Debugging
 If you have issues with GPU, you need to troubleshoot CUDA. It might help to do a conda install of the mujoco mjx package too.
-
